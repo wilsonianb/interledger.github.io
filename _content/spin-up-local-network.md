@@ -12,7 +12,6 @@ This tutorial demonstrates how to:
 
 1. Spin up a local test network with three Interledger.rs nodes
 2. Send a cross-currency payment between them
-3. Settle the payment using a local Ethereum testnet and the XRP Ledger testnet
 
 Note: there are _many_ considerations to deploy an Interledger node into production, and this tutorial merely scratches the surface by running nodes in a safe, local environment without real money.
 
@@ -28,19 +27,13 @@ The services in this example use the following Docker images:
 
 - `interledgerrs/ilp-node` &mdash; Interledger.rs node
 - `interledgerrs/ilp-cli` &mdash; CLI for interacting with Interledger.rs nodes
-- `interledgerrs/ilp-settlement-ethereum` &mdash; Ethereum settlement engine
-- `trufflesuite/ganache-cli` &mdash; Local Ethereum testnet
-- `interledgerjs/settlement-xrp` &mdash; XRP settlement engine
-- `redis` &mdash; Database for the node and settlement engines
+- `redis` &mdash; Database for the node
 
 Run these commands to pull the Docker images:
 
 ```bash
 docker pull interledgerrs/ilp-node
 docker pull interledgerrs/ilp-cli
-docker pull interledgerrs/ilp-settlement-ethereum
-docker pull trufflesuite/ganache-cli
-docker pull interledgerjs/settlement-xrp
 docker pull redis
 ```
 
@@ -61,19 +54,6 @@ docker run -d \
 
 (Each service will use a different database index so they don't conflict with one another.)
 
-Then, launch a local Ethereum testnet with 10 prefunded accounts to use as a settlement ledger between Alice and Bob:
-
-```bash
-docker run -d \
-  --name ethereum-testnet \
-  --network local-ilp \
-  trufflesuite/ganache-cli \
-  -m "abstract vacuum mammal awkward pudding scene penalty purchase dinner depart evoke puzzle" \
-  -i 1
-```
-
-The mnemonic after the `-m` flag is provided so the keys for Alice and Bob aren't randomized, and the `-i` flag configures the Ethereum network ID to be the same as the Ethereum mainnet.
-
 ## 2. Start the nodes
 
 This section walks through creating the three nodes: Alice, Bob, and Charlie.
@@ -82,27 +62,7 @@ The names assigned to each container will be the hostnames used to network betwe
 
 ### Start Alice's node
 
-First, start Alice's Ethereum settlement engine, which will be used to settle with Bob:
-
-```bash
-docker run -d \
-  --name alice-eth \
-  --network local-ilp \
-  -e "RUST_LOG=interledger=trace" \
-  interledgerrs/ilp-settlement-ethereum \
-  --private_key 380eb0f3d505f087e438eca80bc4df9a7faa24f868e69fc0440261a0fc0567dc \
-  --confirmations 0 \
-  --poll_frequency 1000 \
-  --ethereum_url http://ethereum-testnet:8545 \
-  --connector_url http://alice-node:7771 \
-  --redis_url redis://redis:6379/0 \
-  --asset_scale 9 \
-  --settlement_api_bind_address 0.0.0.0:3000
-```
-
-The provided private key corresponds to a prefunded Ethereum account in the Ganache testnet.
-
-Next, start Alice's Interledger node:
+Start Alice's Interledger node:
 
 ```bash
 docker run -d \
@@ -115,46 +75,12 @@ docker run -d \
   --admin_auth_token hi_alice \
   --redis_url redis://redis:6379/1 \
   --http_bind_address 0.0.0.0:7770 \
-  --settlement_api_bind_address 0.0.0.0:7771 \
   --exchange_rate.provider CoinCap
 ```
 
 ### Start Bob's node
 
-First, start Bob's Ethereum settlement engine, which will be used to credit incoming Ethereum payments from Alice:
-
-```bash
-docker run -d \
-  --name bob-eth \
-  --network local-ilp \
-  -e "RUST_LOG=interledger=trace" \
-  interledgerrs/ilp-settlement-ethereum \
-  --private_key cc96601bc52293b53c4736a12af9130abf347669b3813f9ec4cafdf6991b087e \
-  --confirmations 0 \
-  --poll_frequency 1000 \
-  --ethereum_url http://ethereum-testnet:8545 \
-  --connector_url http://bob-node:7771 \
-  --redis_url redis://redis:6379/2 \
-  --asset_scale 9 \
-  --settlement_api_bind_address 0.0.0.0:3000
-```
-
-Now, start Bob's XRP settlement engine, which will be used to settle with Charlie:
-
-```bash
-docker run -d \
-  --name bob-xrp \
-  --network local-ilp \
-  -e "DEBUG=settlement*" \
-  -e "CONNECTOR_URL=http://bob-node:7771" \
-  -e "REDIS_URI=redis://redis:6379/3" \
-  -e "ENGINE_PORT=3001" \
-  interledgerjs/settlement-xrp
-```
-
-The XRP settlement engine will automatically generate a prefunded testnet account and credentials from the [official faucet](https://xrpl.org/xrp-test-net-faucet.html).
-
-Lastly, start Bob's Interledger node:
+Start Bob's Interledger node:
 
 ```bash
 docker run -d \
@@ -162,12 +88,11 @@ docker run -d \
   --network local-ilp \
   -e "RUST_LOG=interledger=trace" \
   interledgerrs/ilp-node \
-  --ilp_address example.bob \
+  --ilp_address test.bob \
   --secret_seed 1604966725982139900555208458637022875563691455429373719368053354 \
   --admin_auth_token hi_bob \
   --redis_url redis://redis:6379/4 \
   --http_bind_address 0.0.0.0:7770 \
-  --settlement_api_bind_address 0.0.0.0:7771 \
   --exchange_rate.provider CoinCap
 ```
 
@@ -175,20 +100,7 @@ Bob will pull exchange rates from the [CoinCap API](http://coincap.io/) for fore
 
 ### Start Charlie's node
 
-Start Charlie's XRP settlement engine to credit incoming settlements from Bob:
-
-```bash
-docker run -d \
-  --name charlie-xrp \
-  --network local-ilp \
-  -e "DEBUG=settlement*" \
-  -e "CONNECTOR_URL=http://charlie-node:7771" \
-  -e "REDIS_URI=redis://redis:6379/5" \
-  -e "ENGINE_PORT=3000" \
-  interledgerjs/settlement-xrp
-```
-
-And lastly, start Charlie's Interledger node:
+Start Charlie's Interledger node:
 
 ```bash
 docker run -d \
@@ -200,7 +112,6 @@ docker run -d \
   --admin_auth_token hi_charlie \
   --redis_url redis://redis:6379/6 \
   --http_bind_address 0.0.0.0:7770 \
-  --settlement_api_bind_address 0.0.0.0:7771 \
   --exchange_rate.provider CoinCap
 ```
 
@@ -209,8 +120,6 @@ docker run -d \
 Next, create accounts which connect and peer each of the Interledger nodes together (Alice to Bob, and Bob to Charlie). Accounts track balances between the two counterparties, and are denominated and settled in an agreed currency. In this example, Alice and Bob denominate their bilateral accounts in ETH with 9 decimal places, whereas Bob and Charlie denominate their bilateral accounts in XRP with 6 decimal places.
 
 Every Interledger packet corresponds to a particular account on the incoming side, and is routed to a subsequent account on the outgoing side. Accounts have parameters such as the maximum allowable packet size; authentication info for incoming and outgoing ILP packets; relations for how packets are routed; and balance parameters, such as credit limits and settlement thresholds.
-
-Alice and Bob's bilateral accounts are each configured with their respective Ethereum settlement engines, and Bob and Charlie's bilateral accounts are each configured with their respective XRP settlement engines.
 
 The `ilp-cli` tool and Docker image interacts with each Interledger node. To simplify issuing CLI commands to each node, create some aliases first:
 
@@ -241,16 +150,11 @@ alice-cli accounts create bob \
   --ilp-address example.bob \
   --asset-code ETH \
   --asset-scale 9 \
-  --settlement-engine-url http://alice-eth:3000 \
   --ilp-over-http-incoming-token bob_password \
   --ilp-over-http-outgoing-token alice_password \
   --ilp-over-http-url http://bob-node:7770/accounts/alice/ilp \
-  --settle-threshold 100000 \
-  --settle-to 0 \
   --routing-relation Peer
 ```
-
-After more than 0.0001 ETH is fulfilled from Alice to Bob (`settle-threshold`), Alice will settle the entire liability with Bob (`settle-to`).
 
 ### Configure Bob's accounts
 
@@ -263,7 +167,6 @@ bob-cli accounts create alice \
   --asset-code ETH \
   --asset-scale 9 \
   --max-packet-amount 100000 \
-  --settlement-engine-url http://bob-eth:3000 \
   --ilp-over-http-incoming-token alice_password \
   --ilp-over-http-outgoing-token bob_password \
   --ilp-over-http-url http://alice-node:7770/accounts/bob/ilp \
@@ -280,16 +183,11 @@ bob-cli accounts create charlie \
   --auth hi_bob \
   --asset-code XRP \
   --asset-scale 6 \
-  --settlement-engine-url http://bob-xrp:3001 \
   --ilp-over-http-incoming-token charlie_password \
   --ilp-over-http-outgoing-token bob_other_password \
   --ilp-over-http-url http://charlie-node:7770/accounts/bob/ilp \
-  --settle-threshold 10000 \
-  --settle-to -1000000 \
   --routing-relation Child
 ```
-
-After 0.01 XRP is fulfilled from Bob to Charlie (`settle-threshold`), Bob will settle the full liability _plus_ prepay Charlie 1 XRP (`settle-to`).
 
 ### Configure Charlie's accounts
 
@@ -301,7 +199,6 @@ charlie-cli accounts create bob \
   --ilp-address example.bob \
   --asset-code XRP \
   --asset-scale 6 \
-  --settlement-engine-url http://charlie-xrp:3000 \
   --ilp-over-http-incoming-token bob_other_password \
   --ilp-over-http-outgoing-token charlie_password \
   --ilp-over-http-url http://bob-node:7770/accounts/charlie/ilp \
@@ -325,18 +222,16 @@ charlie-cli accounts create charlie \
 
 Now, send a payment from Alice to Charlie, via Bob. Specifically, send a payment from the `alice` account on Alice's node, to the `$charlie-node:7770/accounts/charlie/spsp` payment pointer, which corresponds to the `charlie` account on Charlie's node.
 
-To specify the amount, you must use base units. Since Alice's account is denominated in ETH with precision to 9 decimal places, to send the equivalent of 1 ETH, the amount would be `1000000000`, and to send 1 gwei, which is a very small amount of ETH, the amount would be `1`. This example sends a payment for 0.0002 ETH, which STREAM will packetize into many smaller ILP packets.
+To specify the amount, you must use base units. Since Alice's account is denominated in ETH with precision to 9 decimal places, to send the equivalent of 1 ETH, the amount would be `1000000000`, and to send 1 gwei, which is a very small amount of ETH, the amount would be `1`. This example sends a payment for 0.000002 ETH, which STREAM will packetize into many smaller ILP packets.
 
 Note that when the payment is performed, Alice and Charlie's nodes will automatically coordinate with one another to ensure Bob doesn't take too large of a spread or offer a poor exchange rate. By checking Bob's rate against external prices, Alice and Charlie can determine the minimum rate and maximum slippage they're willing to accept. (In this case, they also use the CoinCap API.)
-
-In order for this payment to fully complete within the credit limits set by each peer, Alice must settle by sending an ETH payment to Bob, and Bob must settle by sending an XRP payment to Charlie. Both will automatically be triggered in the background, so the whole payment will take approximately 5 seconds.
 
 Now, send it!
 
 ```bash
 alice-cli pay alice \
   --auth alice_password \
-  --amount 200000 \
+  --amount 2000 \
   --to http://charlie-node:7770/accounts/charlie/spsp
 ```
 
